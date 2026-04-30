@@ -74,9 +74,7 @@ All benchmarks were executed in an isolated WSL2 (Ubuntu 22.04) environment on t
 
 \subsection{Pillar 1: Throughput \& Tail Latency}
 
-Table~\ref{tab:latency} and Fig.~\ref{fig:rps} present the finalized throughput and tail latency results under a 60-second load test with \textbf{10 concurrent connections} using the 10\,KB payload.
-
-Table~\ref{tab:latency_sync} and Table~\ref{tab:latency_async} present the results under a 60-second load test with \textbf{10 concurrent connections} using the 10\,KB payload.
+Table~\ref{tab:latency_sync}, Table~\ref{tab:latency_async}, and Fig.~\ref{fig:rps} present the finalized throughput and tail latency results under a 60-second load test with \textbf{10 concurrent connections} using the 10\,KB payload.
 
 \begin{table}[htbp]
 \caption{Pillar 1a: Synchronous Request-Response (10KB Payload)}
