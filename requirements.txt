@@ -1,0 +1,8 @@
+fastapi==0.104.1
+uvicorn==0.24.0
+grpcio==1.62.0
+grpcio-tools==1.62.0
+protobuf==4.25.1
+pydantic==2.5.0
+setuptools
+requests==2.31.0

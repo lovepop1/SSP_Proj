@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+message Transaction {
+    int32 transaction_id = 1;
+    string timestamp = 2;
+    string user_id = 3;
+    string event_type = 4;
+    double amount = 5;
+    string padding = 6;
+}
+
+message TransactionResponse {
+    bool success = 1;
+    string message = 2;
+    int64 processing_time_ms = 3;
+}
+
+service TransactionService {
+    rpc ProcessTransaction(Transaction) returns (TransactionResponse);
+}

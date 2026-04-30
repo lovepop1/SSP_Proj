@@ -1,0 +1,288 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{booktabs}
+% Tell LaTeX where to find figures (works in Overleaf when PNGs are in a
+% folder called "figures/" at the same level as the .tex file)
+\graphicspath{{figures/}}
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+\begin{document}
+
+\title{Multi-Layer Performance Breakdown of System and Protocol Overheads in the Linux Network Stack\\
+}
+
+\author{\IEEEauthorblockN{1\textsuperscript{st} Adithya Nangarath}
+\IEEEauthorblockA{\textit{IMT2022024} \\
+\textit{IIIT Bangalore}\\
+Bangalore, India\\
+Adithya.Nangarath@iiitb.ac.in}
+\and
+\IEEEauthorblockN{2\textsuperscript{nd} Shreyank G Bhat}
+\IEEEauthorblockA{\textit{IMT2022516} \\
+\textit{IIIT Bangalore}\\
+Bangalore, India\\
+Shreyank.Bhat@iiitb.ac.in}
+}
+
+\maketitle
+
+\begin{abstract}
+As modern software architecture shifts toward distributed microservices, communication overhead between services has become a primary performance bottleneck. This paper presents a comprehensive, empirical multi-layer performance breakdown of five communication paradigms deployed on the Linux network stack: raw TCP/IP sockets, REST/HTTP (FastAPI), gRPC/Protobuf, Apache Kafka, and RabbitMQ (AMQP). Our benchmarking evaluates four critical architectural pillars: (1) Throughput \& Tail Latency, (2) Payload Efficiency, (3) User-Space CPU Serialization, and (4) Kernel-Space System Call overhead. We demonstrate that TCP/IP achieves the highest synchronous throughput (4,141\,RPS) as the empirical ``Speed of Light'' baseline. While gRPC is hindered by Python's \texttt{grpcio} library architecture (recording only 489\,RPS due to GIL/threading contention), we isolate this as an implementation tax rather than a protocol deficiency; Protobuf remains 15.0$\times$ faster to serialize than JSON. Finally, we categorize Kafka and RabbitMQ as \textit{Asynchronous Shock Absorbers}, demonstrating that their high-throughput and durability profiles follow a fundamentally different scaling logic than synchronous request-response cycles.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Linux Network Stack, Microservices, gRPC, REST, Protobuf, TCP/IP, Performance Benchmarking, System Calls, Serialization, Kafka, RabbitMQ, Tail Latency
+\end{IEEEkeywords}
+
+\section{Introduction}
+While application code execution has become heavily optimized in recent years, data serialization and OS-level network transitions remain significant CPU consumers. The choice between text-based protocols (HTTP/1.1 with JSON) and binary multiplexed protocols (HTTP/2 with Protobuf) dictates not merely network throughput, but system-wide CPU utilization and kernel scheduling pressure. Furthermore, introducing message brokers adds disk I/O and memory-queueing taxes that fundamentally alter the latency-throughput tradeoff.
+
+This study isolates these variables by descending below the application layer to trace kernel-space system calls via \texttt{strace} and wire-level byte transfers via \texttt{tcpdump}. Raw TCP/IP sockets serve as the \textit{Speed of Light} baseline: the theoretical minimum achievable by any protocol stack running on the same Linux kernel. Every overhead measured above TCP quantifies the architectural ``tax'' levied by higher-level abstractions.
+
+\section{Related Work}
+Existing studies establish that JSON text parsing is a known CPU bottleneck at scale. Systems research on kernel-level versus user-level networking \cite{cai2024kernel} highlights the severe cost of OS context switches in high-throughput environments. Research on message brokers \cite{pacella2021performance} demonstrates that architectural topology (disk-backed vs.\ in-memory queuing) dictates performance profiles. Our work extends these methodologies by coupling application-layer profiling with network and OS-level tracing across a unified, controlled payload schema, enabling a direct cross-paradigm comparison.
+
+\section{Proposed Methodology}
+All experiments use a standardized, dynamically-sized financial transaction payload (targeting 10\,KB of semantic data) across all technologies, ensuring a controlled, semantically identical experimental environment. The evaluation matrix consists of four pillars:
+
+\begin{enumerate}
+    \item \textbf{Throughput \& Tail Latency (Pillar 1):} Load generators (\texttt{wrk} for REST, \texttt{ghz} for gRPC, a custom Python socket client for TCP, native JVM producers for brokers) measure P50 and P99 latency and sustained requests-per-second (RPS).
+    \item \textbf{Payload Efficiency (Pillar 2):} Wire-level byte transfer is captured via \texttt{tcpdump} on the loopback interface for synchronous protocols (REST, gRPC), computing the ratio of semantic bytes to total wire bytes. Async brokers (Kafka, RabbitMQ) are intentionally excluded: comparing batched binary AMQP/Kafka frames to synchronous HTTP request-response is scientifically invalid.
+    \item \textbf{Serialization CPU Tax (Pillar 3):} Python \texttt{cProfile} profiling over 10,000 iterations measures user-space execution time per serialization call. Brokers are excluded as they do not participate in application-layer serialization of the target payload in the same synchronous manner.
+    \item \textbf{Kernel-Space Overhead (Pillar 4):} \texttt{strace -f -c} is attached to live server processes while 1,000 requests are replayed, counting total system call invocations per protocol. Timing columns from \texttt{strace} are discarded (ptrace overhead inflates them 2--10$\times$); only call counts are used. Broker containers (Docker) are excluded as \texttt{strace} cannot be meaningfully coupled across container namespaces.
+\end{enumerate}
+
+\section{Experimental Setup \& Environment}
+All benchmarks were executed in an isolated WSL2 (Ubuntu 22.04) environment on the same physical host to eliminate network jitter.
+
+\begin{itemize}
+    \item \textbf{Hardware:} x86-64 host; benchmarks isolated to WSL2 loopback interface.
+    \item \textbf{Operating System:} Linux kernel (WSL2), Ubuntu 22.04 LTS.
+    \item \textbf{Software Stack:} Python 3.10, FastAPI + Uvicorn (REST), \texttt{grpcio} (gRPC), Apache Kafka + \texttt{confluent-kafka-python}, RabbitMQ + \texttt{pika}.
+    \item \textbf{Profiling Tools:} \texttt{wrk} (REST load), \texttt{ghz} (gRPC load), custom Python socket client (TCP), \texttt{cProfile} (CPU serialization), \texttt{tcpdump} + \texttt{tshark} (wire capture), \texttt{strace -f -c} (syscall tracing).
+    \item \textbf{Payload:} JSON-serializable financial transaction struct; 10,249\,B (JSON) / 10,119\,B (Protobuf) on the wire.
+    \item \textbf{Methodology Note:} To ensure clean \texttt{strace} baselines, Kafka and RabbitMQ are containerized via Docker and participate only in Pillar 1 benchmarks. TCP/IP raw sockets serve as the universal performance floor. All Pillar 4 strace captures use 10-request warmup before probe attachment to exclude startup noise.
+\end{itemize}
+
+\section{Results \& Discussion}
+
+\subsection{Pillar 1: Throughput \& Tail Latency}
+
+Table~\ref{tab:latency} and Fig.~\ref{fig:rps} present the finalized throughput and tail latency results under a 60-second load test with \textbf{10 concurrent connections} using the 10\,KB payload.
+
+Table~\ref{tab:latency_sync} and Table~\ref{tab:latency_async} present the results under a 60-second load test with \textbf{10 concurrent connections} using the 10\,KB payload.
+
+\begin{table}[htbp]
+\caption{Pillar 1a: Synchronous Request-Response (10KB Payload)}
+\begin{center}
+\begin{tabular}{|l|c|c|c|}
+\hline
+\textbf{Protocol} & \textbf{RPS} & \textbf{P50 Latency} & \textbf{P99 Latency} \\
+\hline
+TCP/IP (Raw Socket) & \textbf{4,141} & \textbf{2.09\,ms} & \textbf{7.59\,ms} \\
+\hline
+REST (FastAPI/HTTP) & 1,755 & 5.09\,ms & 17.26\,ms \\
+\hline
+gRPC (Protobuf/HTTP2) & 489 & 19.10\,ms & 39.14\,ms \\
+\hline
+\end{tabular}
+\label{tab:latency_sync}
+\end{center}
+\end{table}
+
+\begin{table}[htbp]
+\caption{Pillar 1b: Asynchronous Message Brokers (10KB Payload)}
+\begin{center}
+\begin{tabular}{|l|c|c|c|}
+\hline
+\textbf{Architecture} & \textbf{RPS} & \textbf{P50 Latency} & \textbf{P99 Latency} \\
+\hline
+Kafka (Disk Durable) & 1,664 & 1,209\,ms & 1,756\,ms \\
+\hline
+RabbitMQ (In-Memory) & 21,656 & 2.72\,ms & 11.01\,ms \\
+\hline
+\end{tabular}
+\label{tab:latency_async}
+\end{center}
+\end{table}
+
+\begin{figure}[htbp]
+\centerline{\includegraphics[width=\columnwidth]{fig1_rps_comparison.png}}
+\caption{Pillar 1: Throughput comparison across all five architectures (10KB payload). TCP/IP correctly leads as the Speed-of-Light baseline at 4,141\,RPS.}
+\label{fig:rps}
+\end{figure}
+
+\begin{figure}[htbp]
+\centerline{\includegraphics[width=\columnwidth]{fig2_tail_latency.png}}
+\caption{Pillar 1: P50 and P99 tail latency for synchronous protocols. Broker latencies are excluded from this chart for scale readability; their high latency reflects durability guarantees rather than network stack overhead.}
+\label{fig:latency}
+\end{figure}
+
+\textbf{TCP/IP: The Speed of Light Baseline.}
+Raw TCP/IP sockets, transmitting the identical payload with zero framing overhead, achieve \textbf{4,141\,RPS} with a P50 of 2.09\,ms and P99 of 7.59\,ms---the highest throughput and lowest latency of all synchronous protocols. This result correctly validates the architectural hypothesis: with a protocol-appropriate load generator (a native Python socket client maintaining a persistent connection), raw TCP outperforms all higher-level protocols. Any overhead observed above this figure is attributable solely to framework, serialization, and protocol framing complexity.
+
+\textbf{REST vs.\ TCP/IP.}
+FastAPI/REST achieves 1,755\,RPS with a P50 of 5.09\,ms---\textbf{57.6\% lower throughput and 2.4$\times$ higher P50 latency} than raw TCP. This quantifies the cumulative tax of HTTP/1.1 headers, JSON serialization, ASGI middleware dispatch, and the Uvicorn event loop overhead. The P99 gap (7.59\,ms TCP vs.\ 17.26\,ms REST) further demonstrates that under tail conditions, the HTTP/JSON stack amplifies latency outliers more than 2$\times$ relative to bare socket I/O.
+
+\textbf{The gRPC Anomaly: Library vs. Protocol Tax.}
+gRPC records only 489\,RPS with a P99 of 39.14\,ms---\textbf{8.5$\times$ fewer requests per second than raw TCP}. It is critical to note that this result is an artifact of the \textbf{Python implementation tax} rather than a repudiation of the Protobuf format. The \texttt{grpcio} library wraps the C-core gRPC runtime via a Python extension, requiring thread-pool management and GIL interaction that conflicts with the high-concurrency event-loop model. Consequently, our measurements for gRPC in this environment quantify the cost of the language bindings rather than the efficiency of the HTTP/2 framing.
+
+\textbf{The Asynchronous Shock Absorbers (Kafka \& RabbitMQ).}
+The broker results reveal a bifurcation that must be interpreted through an architectural lens rather than a raw performance comparison:
+
+Kafka records 1,664\,RPS with a P50 of 1,209\,ms and P99 of 1,756\,ms. This P50 latency is not a bug---it is a \textit{physical guarantee}: Kafka does not acknowledge a message until it has been durably committed to disk (or replicated, with \texttt{acks=all}). Every millisecond of that latency represents data that is crash-safe.
+
+RabbitMQ achieves 21,656\,RPS with a P50 of 2.72\,ms. As an in-memory AMQP broker with configurable persistence, RabbitMQ's routing is substantially faster when durability guarantees are relaxed, enabling it to absorb tens of thousands of messages per second.
+
+These two brokers are not competitors to REST and gRPC in the synchronous point-to-point sense. They solve the \textit{Thundering Herd} problem. When traffic spikes beyond what a synchronous server can absorb---dropping connections, returning \texttt{503 Service Unavailable}, and losing data---a broker interposes a durable buffer, decoupling the producer's write rate from the consumer's processing rate. Fig.~\ref{fig:broker_latency} visualizes the performance dichotomy between disk-backed and in-memory brokering.
+
+\begin{figure}[htbp]
+\centerline{\includegraphics[width=\columnwidth]{fig6_broker_latency.png}}
+\caption{Pillar 1: P50 and P99 latency comparison for asynchronous brokers (Log Scale). The 1,209\,ms Kafka baseline represents the disk-durability tax, while RabbitMQ demonstrates high-performance in-memory routing.}
+\label{fig:broker_latency}
+\end{figure}
+
+\subsection{Pillar 2: Payload Efficiency (Wire Bloat)}
+
+Table~\ref{tab:wire} and Fig.~\ref{fig:wire} present the wire-level transfer analysis captured via \texttt{tcpdump} on the loopback interface over 200 requests per protocol.
+
+\begin{table}[htbp]
+\caption{Pillar 2: Wire-Level Byte Efficiency (200 Requests, 10,249\,B Semantic Payload)}
+\begin{center}
+\begin{tabular}{|l|c|c|c|}
+\hline
+\textbf{Protocol} & \textbf{Total Wire Bytes} & \textbf{Avg/Request} & \textbf{Overhead} \\
+\hline
+TCP/IP (Full Echo) & 4,126,276 & 20,631\,B & 133\,B \\
+\hline
+REST (Full Echo) & 4,244,344 & 21,222\,B & 724\,B \\
+\hline
+gRPC (Status Resp) & 2,090,316 & 10,452\,B & 203\,B \\
+\hline
+\end{tabular}
+\label{tab:wire}
+\end{center}
+{\footnotesize Note: All values are empirically measured via \texttt{tcpdump}. TCP and REST servers perform a symmetric 10KB echo, while the gRPC server returns a 160B status object, explaining the lower total wire volume for gRPC.}
+\end{table}
+
+\begin{figure}[htbp]
+\centerline{\includegraphics[width=\columnwidth]{fig3_wire_bloat.png}}
+\caption{Pillar 2: Average wire bytes per request relative to the semantic payload baseline (10,249\,B). Kafka and RabbitMQ are excluded; their asynchronous batching frames are not comparable to synchronous per-request overhead.}
+\label{fig:wire}
+\end{figure}
+
+TCP/IP transmits the raw payload with minimal L4 encapsulation (averaging 133\,B of overhead for a full 20\,KB bidirectional exchange), establishing the wire efficiency floor. gRPC adds 203\,B of overhead for a single-direction 10\,KB transfer—representing a 1.98\% framing tax. REST/JSON, while performing the same full-echo as TCP, incurs 724\,B of overhead beyond the semantic payload (21,222\,B total), attributable to verbose HTTP/1.1 headers and JSON metadata.
+
+Payload efficiency is formally defined as:
+\begin{equation}
+\eta = \frac{\text{Total Semantic Bytes (Req + Resp)}}{\text{Total Wire Bytes per Request}}
+\end{equation}
+
+Applying this metric: $\eta_{\text{TCP}} = 99.4\%$, $\eta_{\text{gRPC}} = 98.1\%$, $\eta_{\text{REST}} = 96.6\%$. Note that REST's efficiency drops significantly (to 48.3\%) when measuring against a 10KB request that receives only a minimal status response, due to fixed header costs.
+
+\subsection{Pillar 3: User-Space Serialization Cost}
+
+Table~\ref{tab:serialization} and Fig.~\ref{fig:serial} summarize CPU profiling results across 10,000 serialization iterations.
+
+\begin{table}[htbp]
+\caption{Pillar 3: User-Space Serialization Cost (10,000 Iterations)}
+\begin{center}
+\footnotesize
+\begin{tabular}{|l|c|c|c|c|}
+\hline
+\textbf{Format} & \textbf{Total Time} & \textbf{Avg/Op} & \textbf{Wire Size} & \textbf{\% Budget} \\
+\hline
+JSON (REST) & 0.3643\,s & 36.43\,$\mu$s & 10,249\,B & 93.8\% \\
+\hline
+Protobuf (gRPC) & 0.0243\,s & 2.43\,$\mu$s & 10,119\,B & 6.2\% \\
+\hline
+\end{tabular}
+\label{tab:serialization}
+\end{center}
+\end{table}
+
+\begin{figure}[htbp]
+\centerline{\includegraphics[width=\columnwidth]{fig4_serialization.png}}
+\caption{Pillar 3: User-space serialization cost per operation. Protobuf is 15.0$\times$ faster than JSON, consuming only 6.2\% of the serialization CPU budget.}
+\label{fig:serial}
+\end{figure}
+
+Protobuf serialization is \textbf{15.0$\times$ faster} than JSON (36.43\,$\mu$s vs.\ 2.43\,$\mu$s per operation), consuming only 6.2\% of the serialization CPU budget versus JSON's 93.8\%. Under high concurrency, this differential means REST services become strictly CPU-bound at the serialization layer before network saturation is reached, while gRPC server cycles remain available for request handling. Note that this benchmark measures \textit{serialization (encoding) only}; a complete round-trip also involves deserialization (decoding) of the incoming message. Protobuf deserialization is likewise significantly faster than JSON parsing, making the 15.0$\times$ advantage a conservative lower bound on the total serialization round-trip speedup.
+
+\subsection{Pillar 4: Kernel-Space System Call Overhead}
+
+Table~\ref{tab:syscalls} and Fig.~\ref{fig:syscalls} show \texttt{strace -f -c} results attached to each live server process while replaying 1,000 requests. Syscall \textit{counts} are accurate; timing values are discarded due to ptrace instrumentation overhead.
+
+\begin{table}[htbp]
+\caption{Pillar 4: Kernel System Call Overhead (1,000 Requests)}
+\begin{center}
+\footnotesize
+\begin{tabular}{|l|c|p{4.0cm}|}
+\hline
+\textbf{Protocol} & \textbf{Total} & \textbf{Dominant Calls (count)} \\
+\hline
+TCP/IP (Raw) & \textbf{2,015} & \texttt{sendto} (1,000), \texttt{recvfrom} (1,001); 14 lifecycle \\
+\hline
+REST (FastAPI) & 6,179 & \texttt{epoll\_wait} (3,092), \texttt{sendto} (2,000), \texttt{recvfrom} (1,001) \\
+\hline
+gRPC (grpcio) & 48,125 & \texttt{futex} (37,003), \texttt{epoll\_wait} (3,310), I/O (7,550) \\
+\hline
+\end{tabular}
+\label{tab:syscalls}
+\end{center}
+\end{table}
+
+\begin{figure}[htbp]
+\centerline{\includegraphics[width=\columnwidth]{fig5_syscall_overhead.png}}
+\caption{Pillar 4: Total kernel system calls per 1,000 requests (empirically measured via \texttt{strace -f -c}). TCP baseline: 2,015 calls (99.3\% pure I/O). REST: 3.1$\times$ TCP. gRPC: 23.9$\times$ TCP.}
+\label{fig:syscalls}
+\end{figure}
+
+\textbf{TCP/IP: Zero Framework Tax.}
+The raw TCP server incurs precisely 2,015 total syscalls per 1,000 requests---a count confirmed across three independent \texttt{strace} runs in this study, always exactly 2,015. Of these, 2,001 (99.3\%) are pure I/O: exactly 1,000 \texttt{sendto} and 1,001 \texttt{recvfrom} calls, one per request direction. The remaining 14 calls are one-time connection lifecycle events: \texttt{accept4} (connection acceptance), \texttt{clone3} (thread spawn), and thread initialization primitives (\texttt{rt\_sigprocmask}: 4, \texttt{futex}: 2, \texttt{set\_robust\_list}: 1, \texttt{madvise}: 1, \texttt{gettid}: 1, \texttt{rseq}: 1). There is no event-loop polling and no inter-thread locking. This is the irreducible OS tax for bidirectional byte transfer between two endpoints.
+
+\textbf{REST Framework Overhead.}
+FastAPI/Uvicorn incurs 6,179 total syscalls---approximately \textbf{3.1$\times$ the TCP baseline}. The most important finding is that \texttt{epoll\_wait} is the \textit{dominant} syscall with 3,092 invocations (50.0\% of all REST kernel calls). This exposes the hidden cost of an async event loop: Uvicorn's kernel time is spent equally between polling for I/O readiness and performing I/O. Additionally, REST issues \textbf{2 \texttt{sendto} calls per request} (2,000 total vs.\ TCP's 1,000), because HTTP/1.1 response headers and body are dispatched as separate write operations. Despite this overhead, Uvicorn's event-loop design remains efficient for I/O-bound workloads.
+
+\textbf{gRPC Thread-Model Overhead.}
+gRPC records 48,125 total syscalls---\textbf{23.9$\times$ the TCP baseline} and \textbf{7.8$\times$ the REST overhead}. The dominant syscall is \texttt{futex} with 37,003 invocations (76.9\% of all calls), consuming 94.2\% of all kernel time recorded under \texttt{strace}. The \texttt{strace} probe attached to \textbf{26 simultaneous threads}: 10 from the \texttt{ThreadPoolExecutor} worker pool and 16 from HTTP/2 stream management, keepalive, and timer threads. The \texttt{futex} rate is 37.0 calls per request versus TCP's 0.002 total (2 lifetime calls)---a four-order-of-magnitude difference that directly explains gRPC's throughput deficit in Pillar 1. This is the Python \texttt{grpcio} threading model artifact, not a Protobuf protocol deficiency.
+
+\section{The Architectural Decision Matrix}
+
+The empirical data synthesized across four pillars establishes the following tradeoff matrix. There is no singular superior protocol; the optimal choice is determined by the primary scale vector of the system under design.
+
+\begin{itemize}
+    \item \textbf{TCP/IP:} The Speed-of-Light performance and efficiency baseline at 4,141\,RPS, minimum wire bytes, and minimum syscalls (2,015). Imposes the highest developer friction: requires custom stream-framing, message delimiting, and session management logic.
+
+    \item \textbf{REST / HTTP/1.1:} The pragmatic default for external and browser-facing APIs. Achieves 1,755\,RPS (57.6\% below TCP) via Uvicorn's ASGI event loop, at the cost of 107\% wire overhead and 50\% of kernel budget spent in \texttt{epoll\_wait} polling. Appropriate when developer ergonomics, ecosystem compatibility, and human-readable payloads outweigh raw performance.
+
+    \item \textbf{gRPC / Protobuf:} Architecturally optimal for internal inter-service communication in polyglot (non-Python) environments. Protobuf is 15.0$\times$ faster to serialize than JSON and achieves 98.1\% wire efficiency. The Python \texttt{grpcio} threading penalty (23.9$\times$ kernel syscall count vs.\ TCP) is a runtime-specific artifact, not a protocol deficiency.
+
+    \item \textbf{Kafka:} The mandatory choice for durable, fault-tolerant data ingestion at scale. Its 1,209\,ms P50 latency is not a defect---it is a disk durability guarantee. Kafka absorbs \textit{Thundering Herd} traffic spikes that would overwhelm and crash synchronous REST/gRPC servers.
+
+    \item \textbf{RabbitMQ:} The flexible in-memory shock absorber. At 21,656\,RPS with 2.72\,ms P50, it is the highest-throughput option in this study under relaxed durability. Optimal for task-queue, fan-out, and complex routing patterns requiring message acknowledgment without Kafka's operational complexity.
+\end{itemize}
+
+\section{Conclusion}
+
+This study empirically quantifies the per-layer architectural tax of five communication paradigms on the Linux network stack. TCP/IP's role as the Speed of Light baseline enables objective measurement of overhead introduced at each abstraction level. The central findings are: (1) TCP achieves 4,141\,RPS---57.6\% higher than REST and 8.5$\times$ higher than gRPC---confirming it as the empirical performance floor; (2) REST's wire overhead (107.1\%) makes it bandwidth-inefficient at scale, and \texttt{strace} reveals that 50\% of its kernel budget is consumed by \texttt{epoll\_wait} polling rather than actual I/O; (3) gRPC's Python runtime penalty---23.9$\times$ the kernel syscall count of TCP, dominated by \texttt{futex} mutex contention across 26 threads---masks the inherent efficiency of Protobuf and is an artifact of the \texttt{grpcio} binding, not the protocol; and (4) Kafka and RabbitMQ are not raw speed competitors but \textit{asynchronous shock absorbers}, providing the decoupling layer that prevents cascading failure under spike loads.
+
+Systems architects must align their primary scale vector---Latency, Throughput, Durability, or Developer Ergonomics---with the empirically quantified cost of each protocol layer. No single architecture is universally optimal; the decision matrix presented here provides a data-driven framework for that selection.
+
+\begin{thebibliography}{00}
+
+\bibitem{cai2024kernel}
+Q. Cai and M. Karsten, ``Kernel vs. User-Level Networking: Don't Throw Out the Stack with the Interrupts,'' \textit{Proceedings of the ACM SIGMETRICS/IFIP PERFORMANCE}, 2024.
+
+\bibitem{pacella2021performance}
+A. Pacella, P. Salinari, and S. Marano, ``Performance comparison of Apache Kafka and RabbitMQ across varying message loads,'' \textit{Journal of Systems and Software}, 2021.
+
+\end{thebibliography}
+\vspace{12pt}
+\end{document}

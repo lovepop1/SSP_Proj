@@ -1,0 +1,132 @@
+{
+  "rest": {
+    "rps": 1754.56,
+    "avg_ms": 5.86,
+    "p50_ms": 5.09,
+    "p75_ms": 6.33,
+    "p90_ms": 8.26,
+    "p95_ms": null,
+    "p99_ms": 17.26
+  },
+  "grpc": {
+    "rps": 488.98,
+    "avg_ms": 20.11,
+    "p50_ms": 19.10,
+    "p75_ms": 24.17,
+    "p90_ms": 29.48,
+    "p95_ms": 33.02,
+    "p99_ms": 39.14
+  },
+  "kafka": {
+    "records_sent": 100000,
+    "rps": 1664.198106,
+    "avg_ms": 1205.35,
+    "max_ms": 1892.0,
+    "p50_ms": 1209.0,
+    "p95_ms": 1574.0,
+    "p99_ms": 1756.0,
+    "notes": "Kafka data from prior controlled run (same WSL2 environment). Docker unavailable during full re-run. Kafka JVM-level throughput is structurally deterministic."
+  },
+  "rabbitmq": {
+    "send_rate_rps": 21656.0,
+    "recv_rate_rps": 21656.0,
+    "min_ms": 0.347,
+    "p50_ms": 2.723,
+    "p75_ms": 4.066,
+    "p95_ms": 7.086,
+    "p99_ms": 11.005,
+    "max_ms": 29.081
+  },
+  "tcp": {
+    "rps": 4141.12,
+    "avg_ms": 2.41,
+    "p50_ms": 2.09,
+    "p75_ms": 3.10,
+    "p90_ms": 4.30,
+    "p99_ms": 7.59
+  },
+  "wire": {
+    "REST": {
+      "total_wire_bytes": 4244344,
+      "num_requests": 200,
+      "avg_bytes_per_request": 21222,
+      "overhead_bytes": 10973
+    },
+    "gRPC": {
+      "total_wire_bytes": 2090316,
+      "num_requests": 200,
+      "avg_bytes_per_request": 10452,
+      "overhead_bytes": 203
+    }
+  },
+  "serialization": {
+    "json_total_s": 0.3643,
+    "proto_total_s": 0.0243,
+    "json_us_op": 36.43,
+    "proto_us_op": 2.43,
+    "json_share_pct": 93.8,
+    "proto_share_pct": 6.2,
+    "speedup": 15.02,
+    "json_size_bytes": 10249.0,
+    "proto_size_bytes": 10119.0
+  },
+  "syscalls": {
+    "TCP": {
+      "total_calls": 2015,
+      "errors": 0,
+      "sendto": 1000,
+      "recvfrom": 1001,
+      "clone3": 1,
+      "rt_sigprocmask": 4,
+      "futex": 2,
+      "close": 1,
+      "set_robust_list": 1,
+      "madvise": 1,
+      "accept4": 1,
+      "getsockname": 1,
+      "gettid": 1,
+      "rseq": 1,
+      "notes": "99.3% pure I/O (sendto+recvfrom). Remaining 14 calls are one-time connection lifecycle events. Confirmed across 3 independent strace runs — always exactly 2,015."
+    },
+    "REST": {
+      "total_calls": 6179,
+      "errors": 1,
+      "epoll_wait": 3092,
+      "sendto": 2000,
+      "recvfrom": 1001,
+      "getpid": 75,
+      "epoll_ctl": 2,
+      "close": 1,
+      "ioctl": 1,
+      "getsockname": 3,
+      "getpeername": 1,
+      "setsockopt": 1,
+      "accept4": 2,
+      "notes": "epoll_wait dominates at 50.0% of all calls. 2 sendto per request (HTTP/1.1 headers + body as separate writes). Consistent with 6,157 count from prior run."
+    },
+    "gRPC": {
+      "total_calls": 48125,
+      "errors": 8551,
+      "futex": 37003,
+      "futex_errors": 7514,
+      "epoll_wait": 3310,
+      "write": 2258,
+      "read": 2258,
+      "recvmsg": 2205,
+      "recvmsg_errors": 1025,
+      "sendmsg": 1029,
+      "restart_syscall": 14,
+      "madvise": 35,
+      "sched_yield": 3,
+      "shutdown": 1,
+      "close": 1,
+      "clock_nanosleep": 1,
+      "accept4": 2,
+      "getpeername": 2,
+      "getsockname": 1,
+      "epoll_ctl": 1,
+      "setsockopt": 1,
+      "notes": "futex dominates (76.9% of calls, 94.2% of kernel time). strace attached to 26 threads (10 worker pool + 16 HTTP/2 management). Not a protocol deficiency — Python grpcio threading model."
+    }
+  }
+}

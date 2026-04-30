@@ -1,0 +1,42 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Virtual Environments
+.venv/
+venv/
+env/
+ENV/
+
+# LaTeX temporary files
+*.aux
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.synctex.gz
+*.toc
+*.blg
+*.bbl
+
+# Benchmarking Outputs & PCAPs
+*.pcap
+*.prof
+*.log
+benchmarks/*_out.txt
+benchmarks/*.prof
+results/*.txt
+results/*.csv
+
+# Generated Figures (Optional: Comment out if you want to commit generated plots)
+# figures/*.png
+
+# IDE / System
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

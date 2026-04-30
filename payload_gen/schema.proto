@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package payload_gen;
+
+message Transaction {
+    string transaction_id = 1;
+    double timestamp = 2;
+    int32 user_id = 3;
+    double amount = 4;
+    string currency = 5;
+    string description = 6;
+    string merchant_code = 7;
+    string metadata = 8;
+}
+
+message Empty {}
+
+service BenchmarkService {
+    rpc ProcessTransaction (Transaction) returns (Transaction);
+}
