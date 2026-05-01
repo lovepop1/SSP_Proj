@@ -86,14 +86,15 @@ def fig1_rps(data: dict, out_dir: str):
     ax.set_title('Pillar 1 — Throughput Comparison (10 KB payload, 50 concurrent connections)')
     ax.set_ylabel('Requests / second  (higher is better)')
     ax.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f'{x:,.0f}'))
-    ax.set_ylim(0, max(vals) * 1.22)
+    ax.set_ylim(0, max(vals) * 1.35) # More headroom for labels
 
-    # Annotation for brokers
+    # Annotation for brokers - moved to top right to avoid overlap
     ax.annotate('Brokers: asynchronous\nshock-absorber role\n(not direct speed competitors)',
-                xy=(0, vals[0]), xytext=(0.05, 0.80),
+                xy=(0, vals[0]), xytext=(0.4, 0.85),
                 textcoords='axes fraction',
-                fontsize=7.5, color='#555',
-                arrowprops=dict(arrowstyle='->', color='#888', lw=0.8))
+                fontsize=8, color='#444',
+                bbox=dict(boxstyle='round,pad=0.5', fc='white', alpha=0.8, ec='#ccc'),
+                arrowprops=dict(arrowstyle='->', color='#888', lw=1.2, connectionstyle="arc3,rad=.2"))
 
     savefig(fig, os.path.join(out_dir, 'fig1_rps_comparison.png'))
 
@@ -140,16 +141,25 @@ def fig2_latency(data: dict, out_dir: str):
 # ── Fig 3: Wire Bloat (Pillar 2) ─────────────────────────────────────────────
 def fig3_wire(data: dict, out_dir: str):
     wire = data.get('wire')
-    if not wire:
-        print("  SKIP fig3 — no wire data"); return
+    s = data.get('serialization', {})
+    if not wire or not s:
+        print("  SKIP fig3 — incomplete data"); return
 
-    # Add TCP approximation (payload size × 200, no framing)
-    payload_bytes = data.get('serialization', {}).get('json_size_bytes', 10248)
-    tcp_avg = round(payload_bytes)   # ~0 overhead
+    # Correct Semantic Baselines
+    # REST/TCP: Full Echo (10KB req + 10KB resp)
+    # gRPC: Status Resp (10KB req + 160B status)
+    json_payload = s.get('json_size_bytes', 10249)
+    proto_payload = s.get('proto_size_bytes', 10119)
+    
+    baselines = {
+        'TCP':  json_payload * 2,    # 20,498
+        'REST': json_payload * 2,    # 20,498
+        'gRPC': proto_payload + 160  # 10,279
+    }
 
     proto_order = ['TCP', 'gRPC', 'REST']
     avgs = {
-        'TCP':  tcp_avg,
+        'TCP':  baselines['TCP'] + 133,  # 20,631 (per Table III)
         'gRPC': wire.get('gRPC', {}).get('avg_bytes_per_request'),
         'REST': wire.get('REST', {}).get('avg_bytes_per_request'),
     }
@@ -160,12 +170,18 @@ def fig3_wire(data: dict, out_dir: str):
     vals   = [avgs[p] for p in proto_order]
     colors = [COLORS[p] for p in proto_order]
 
-    fig, ax = plt.subplots(figsize=(7, 4.5))
+    fig, ax = plt.subplots(figsize=(8, 5))
     bars = ax.bar(labels, vals, color=colors, width=0.45, edgecolor='white')
 
-    baseline = payload_bytes
-    ax.axhline(baseline, color='#333', linestyle='--', linewidth=1.2,
-               label=f'Semantic payload ({baseline:,.0f} B)')
+    # Draw baselines for each bar
+    for i, proto in enumerate(labels):
+        base = baselines[proto]
+        ax.plot([i-0.25, i+0.25], [base, base], color='#333', linestyle='--', linewidth=1.5)
+        # Label baselines BELOW the line to avoid overlap with bar labels
+        label_y = base - max(vals) * 0.02
+        ax.text(i, label_y, f'Baseline: {base:,.0f} B', 
+                ha='center', va='top', fontsize=7.5, color='#333', fontweight='bold',
+                bbox=dict(boxstyle='round,pad=0.2', fc='white', alpha=0.6, ec='none'))
 
     for bar, val in zip(bars, vals):
         ax.text(bar.get_x() + bar.get_width() / 2,
@@ -174,15 +190,17 @@ def fig3_wire(data: dict, out_dir: str):
 
     # Overhead annotations
     for i, (proto, val) in enumerate(zip(labels, vals)):
-        overhead_pct = (val - baseline) / baseline * 100
+        base = baselines[proto]
+        overhead_pct = (val - base) / base * 100
         ax.text(i, val / 2,
-                f'+{overhead_pct:.0f}%\noverhead' if overhead_pct > 0 else 'baseline',
+                f'+{overhead_pct:.1f}%\noverhead' if overhead_pct > 0.1 else 'baseline',
                 ha='center', va='center', fontsize=8, color='white', fontweight='bold')
 
-    ax.set_title('Pillar 2 — Wire-Level Bytes per Request (200 requests, 10 KB semantic payload)\n'
-                 'Kafka & RabbitMQ excluded: async batching frames are not comparable')
+    ax.set_title('Pillar 2 — Wire-Level Bytes per Request (Bidirectional Context)\n'
+                 'TCP/REST: 20.5 KB Echo | gRPC: 10 KB Request + 160 B Status')
     ax.set_ylabel('Bytes per request  ·  lower is better')
-    ax.legend()
+    ax.set_ylim(0, max(vals) * 1.25)
+    
     savefig(fig, os.path.join(out_dir, 'fig3_wire_bloat.png'))
 
 
@@ -284,7 +302,7 @@ def main():
     data = load(args.data)
     os.makedirs(args.out, exist_ok=True)
 
-    print(f"Generating figures from {args.data} → {args.out}/")
+    print(f"Generating figures from {args.data} -> {args.out}/")
     fig1_rps(data, args.out)
     fig2_latency(data, args.out)
     fig3_wire(data, args.out)
