@@ -175,14 +175,14 @@ gRPC (Status Resp) & 2,090,316 & 10,452\,B & 203\,B \\
 \label{fig:wire}
 \end{figure}
 
-TCP/IP transmits the raw payload with minimal L4 encapsulation (averaging 133\,B of overhead for a full 20\,KB bidirectional exchange), establishing the wire efficiency floor. gRPC adds 203\,B of overhead for a single-direction 10\,KB transfer—representing a 1.98\% framing tax. REST/JSON, while performing the same full-echo as TCP, incurs 724\,B of overhead beyond the semantic payload (21,222\,B total), attributable to verbose HTTP/1.1 headers and JSON metadata.
+TCP/IP transmits the raw payload with minimal L4 encapsulation (averaging 133\,B of overhead for a full 20\,KB bidirectional exchange), establishing the wire efficiency floor. gRPC adds 203\,B of overhead for a single-direction 10\,KB transfer—representing a 1.98\% framing tax. REST/JSON, while performing the same full-echo as TCP, incurs 724 B of overhead beyond the bidirectional semantic payload (21,222 B total), attributable to verbose HTTP/1.1 headers and JSON metadata.
 
 Payload efficiency is formally defined as:
 \begin{equation}
 \eta = \frac{\text{Total Semantic Bytes (Req + Resp)}}{\text{Total Wire Bytes per Request}}
 \end{equation}
 
-Applying this metric: $\eta_{\text{TCP}} = 99.4\%$, $\eta_{\text{gRPC}} = 98.1\%$, $\eta_{\text{REST}} = 96.6\%$. Note that REST's efficiency drops significantly (to 48.3\%) when measuring against a 10KB request that receives only a minimal status response, due to fixed header costs.
+Applying this metric: $\eta_{\text{TCP}} = 99.4\%$, $\eta_{\text{gRPC}} = 98.3\%$, $\eta_{\text{REST}} = 96.6\%$. Note that these efficiencies remain high because the large 10\,KB payloads amortize the fixed costs of HTTP/2 and HTTP/1.1 headers.
 
 \subsection{Pillar 3: User-Space Serialization Cost}
 
@@ -192,13 +192,13 @@ Table~\ref{tab:serialization} and Fig.~\ref{fig:serial} summarize CPU profiling 
 \caption{Pillar 3: User-Space Serialization Cost (10,000 Iterations)}
 \begin{center}
 \footnotesize
-\begin{tabular}{|l|c|c|c|c|}
+\begin{tabular}{|l|c|c|c|}
 \hline
-\textbf{Format} & \textbf{Total Time} & \textbf{Avg/Op} & \textbf{Wire Size} & \textbf{\% Budget} \\
+\textbf{Format} & \textbf{Total Time} & \textbf{Avg/Op} & \textbf{Wire Size} \\
 \hline
-JSON (REST) & 0.3643\,s & 36.43\,$\mu$s & 10,249\,B & 93.8\% \\
+JSON (REST) & 0.3643\,s & 36.43\,$\mu$s & 10,249\,B \\
 \hline
-Protobuf (gRPC) & 0.0243\,s & 2.43\,$\mu$s & 10,119\,B & 6.2\% \\
+Protobuf (gRPC) & 0.0243\,s & 2.43\,$\mu$s & 10,119\,B \\
 \hline
 \end{tabular}
 \label{tab:serialization}
@@ -207,11 +207,12 @@ Protobuf (gRPC) & 0.0243\,s & 2.43\,$\mu$s & 10,119\,B & 6.2\% \\
 
 \begin{figure}[htbp]
 \centerline{\includegraphics[width=\columnwidth]{fig4_serialization.png}}
-\caption{Pillar 3: User-space serialization cost per operation. Protobuf is 15.0$\times$ faster than JSON, consuming only 6.2\% of the serialization CPU budget.}
+\caption{Pillar 3: User-space serialization cost per operation. Protobuf is 15.0$\times$ faster than JSON, demonstrating a significant reduction in CPU cycles per message.}
 \label{fig:serial}
 \end{figure}
 
-Protobuf serialization is \textbf{15.0$\times$ faster} than JSON (36.43\,$\mu$s vs.\ 2.43\,$\mu$s per operation), consuming only 6.2\% of the serialization CPU budget versus JSON's 93.8\%. Under high concurrency, this differential means REST services become strictly CPU-bound at the serialization layer before network saturation is reached, while gRPC server cycles remain available for request handling. Note that this benchmark measures \textit{serialization (encoding) only}; a complete round-trip also involves deserialization (decoding) of the incoming message. Protobuf deserialization is likewise significantly faster than JSON parsing, making the 15.0$\times$ advantage a conservative lower bound on the total serialization round-trip speedup.
+Protobuf serialization is \textbf{15.0$\times$ faster} than JSON (36.43\,$\mu$s vs.\ 2.43\,$\mu$s per operation), significantly reducing the per-message serialization tax compared to JSON.
+ Under high concurrency, this differential means REST services become strictly CPU-bound at the serialization layer before network saturation is reached, while gRPC server cycles remain available for request handling. Note that this benchmark measures \textit{serialization (encoding) only}; a complete round-trip also involves deserialization (decoding) of the incoming message. Protobuf deserialization is likewise significantly faster than JSON parsing, making the 15.0$\times$ advantage a conservative lower bound on the total serialization round-trip speedup.
 
 \subsection{Pillar 4: Kernel-Space System Call Overhead}
 
@@ -258,9 +259,9 @@ The empirical data synthesized across four pillars establishes the following tra
 \begin{itemize}
     \item \textbf{TCP/IP:} The Speed-of-Light performance and efficiency baseline at 4,141\,RPS, minimum wire bytes, and minimum syscalls (2,015). Imposes the highest developer friction: requires custom stream-framing, message delimiting, and session management logic.
 
-    \item \textbf{REST / HTTP/1.1:} The pragmatic default for external and browser-facing APIs. Achieves 1,755\,RPS (57.6\% below TCP) via Uvicorn's ASGI event loop, at the cost of 107\% wire overhead and 50\% of kernel budget spent in \texttt{epoll\_wait} polling. Appropriate when developer ergonomics, ecosystem compatibility, and human-readable payloads outweigh raw performance.
+    \item \textbf{REST / HTTP/1.1:} The pragmatic default for external and browser-facing APIs. Achieves 1,755\,RPS (57.6\% below TCP) via Uvicorn's ASGI event loop, at the cost of 3.4\% wire overhead (relative to the 20.5\,KB bidirectional payload) and 50\% of kernel budget spent in \texttt{epoll\_wait} polling. Appropriate when developer ergonomics, ecosystem compatibility, and human-readable payloads outweigh raw performance.
 
-    \item \textbf{gRPC / Protobuf:} Architecturally optimal for internal inter-service communication in polyglot (non-Python) environments. Protobuf is 15.0$\times$ faster to serialize than JSON and achieves 98.1\% wire efficiency. The Python \texttt{grpcio} threading penalty (23.9$\times$ kernel syscall count vs.\ TCP) is a runtime-specific artifact, not a protocol deficiency.
+    \item \textbf{gRPC / Protobuf:} Architecturally optimal for internal inter-service communication in polyglot (non-Python) environments. Protobuf is 15.0$\times$ faster to serialize than JSON and achieves 98.3\% wire efficiency. The Python \texttt{grpcio} threading penalty (23.9$\times$ kernel syscall count vs.\ TCP) is a runtime-specific artifact, not a protocol deficiency.
 
     \item \textbf{Kafka:} The mandatory choice for durable, fault-tolerant data ingestion at scale. Its 1,209\,ms P50 latency is not a defect---it is a disk durability guarantee. Kafka absorbs \textit{Thundering Herd} traffic spikes that would overwhelm and crash synchronous REST/gRPC servers.
 
@@ -269,7 +270,7 @@ The empirical data synthesized across four pillars establishes the following tra
 
 \section{Conclusion}
 
-This study empirically quantifies the per-layer architectural tax of five communication paradigms on the Linux network stack. TCP/IP's role as the Speed of Light baseline enables objective measurement of overhead introduced at each abstraction level. The central findings are: (1) TCP achieves 4,141\,RPS---57.6\% higher than REST and 8.5$\times$ higher than gRPC---confirming it as the empirical performance floor; (2) REST's wire overhead (107.1\%) makes it bandwidth-inefficient at scale, and \texttt{strace} reveals that 50\% of its kernel budget is consumed by \texttt{epoll\_wait} polling rather than actual I/O; (3) gRPC's Python runtime penalty---23.9$\times$ the kernel syscall count of TCP, dominated by \texttt{futex} mutex contention across 26 threads---masks the inherent efficiency of Protobuf and is an artifact of the \texttt{grpcio} binding, not the protocol; and (4) Kafka and RabbitMQ are not raw speed competitors but \textit{asynchronous shock absorbers}, providing the decoupling layer that prevents cascading failure under spike loads.
+This study empirically quantifies the per-layer architectural tax of five communication paradigms on the Linux network stack. TCP/IP's role as the Speed of Light baseline enables objective measurement of overhead introduced at each abstraction level. The central findings are: (1) TCP achieves 4,141\,RPS---57.6\% higher than REST and 8.5$\times$ higher than gRPC---confirming it as the empirical performance floor; (2) REST's wire overhead, while only 3.4\% for large payloads, aggregates significantly at scale, and \texttt{strace} reveals that 50\% of its kernel budget is consumed by \texttt{epoll\_wait} polling rather than actual I/O; (3) gRPC's Python runtime penalty---23.9$\times$ the kernel syscall count of TCP, dominated by \texttt{futex} mutex contention across 26 threads---masks the inherent efficiency of Protobuf and is an artifact of the \texttt{grpcio} binding, not the protocol; and (4) Kafka and RabbitMQ are not raw speed competitors but \textit{asynchronous shock absorbers}, providing the decoupling layer that prevents cascading failure under spike loads.
 
 Systems architects must align their primary scale vector---Latency, Throughput, Durability, or Developer Ergonomics---with the empirically quantified cost of each protocol layer. No single architecture is universally optimal; the decision matrix presented here provides a data-driven framework for that selection.
 
